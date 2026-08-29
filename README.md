@@ -1,8 +1,8 @@
 <<<<<<< HEAD
-# My Project
+# BaoQuoc Project
 
 ## Description
-This project is used to ...
+This project is yolo web app, use for detecting objects
 
 ## Installation
 
