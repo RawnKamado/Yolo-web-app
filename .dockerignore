@@ -1,0 +1,35 @@
+# Python virtual environments
+.venv/
+venv/
+myenv/
+yolo_env/
+backend/venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Git
+.git/
+.gitignore
+
+# Python / tooling cache
+.pytest_cache/
+.mypy_cache/
+
+# Model files
+*.pt
+*.pth
+*.bin
+
+# Temporary output
+outputs/
+uploads/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Logs
+*.log
