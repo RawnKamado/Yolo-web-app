@@ -176,8 +176,11 @@ async def detect_image(
     print("BEFORE YOLO", flush=True)
 
     try:
-        results = model(
-            image,
+        results = model.predict(
+            source=image,
+            imgsz=320,
+            conf=0.25,
+            device="cpu",
             verbose=False
         )
         print("AFTER YOLO", flush=True)
