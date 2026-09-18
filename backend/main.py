@@ -119,6 +119,7 @@ async def detect_image(
     request: Request,
     file: UploadFile = File(...)
 ):
+    print("IMAGE REQUEST RECEIVED", flush=True)
 
     # -----------------------------------------------------
     # 1. Check file type
@@ -172,10 +173,13 @@ async def detect_image(
 
     start_time = time.perf_counter()
 
+	print("BEFORE YOLO", flush=True)
+
     results = model(
         image,
         verbose=False
     )
+	print("AFTER YOLO", flush=True)
 
     processing_time = time.perf_counter() - start_time
 
@@ -431,6 +435,7 @@ async def detect_video(
     # -----------------------------------------------------
     # 11. Return result
     # -----------------------------------------------------
+print("BEFORE RETURN", flush=True)
 
     return {
         "success": True,
