@@ -176,15 +176,14 @@ async def detect_image(
     print("BEFORE YOLO", flush=True)
 
     try:
-    results = model(
-        image,
-        verbose=False
-    )
-    print("AFTER YOLO", flush=True)
-
-except Exception as e:
-    print(f"YOLO ERROR: {type(e).__name__}: {e}", flush=True)
-    raise
+        results = model(
+            image,
+            verbose=False
+        )
+        print("AFTER YOLO", flush=True)
+    except Exception as e:
+        print(f"YOLO ERROR: {type(e).__name__}: {e}", flush=True)
+        raise
 
     processing_time = time.perf_counter() - start_time
 
