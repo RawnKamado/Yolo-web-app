@@ -78,9 +78,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-    	"http://localhost:5173",
-    	"http://localhost:8080",
-    ],
+    "http://localhost:5173",
+    "http://localhost:8080",
+    "https://yolo-web-app-1.onrender.com",
+	],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
