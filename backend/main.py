@@ -12,6 +12,8 @@ from fastapi.staticfiles import StaticFiles
 
 from ultralytics import YOLO
 
+from logging_config import setup_logging, logger
+
 
 # =========================================================
 # CONFIGURATION
@@ -31,10 +33,16 @@ ALLOWED_VIDEO_TYPES = {
     "video/mp4",
 }
 
-
 OUTPUT_DIR = "outputs"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+# =========================================================
+# LOGGING
+# =========================================================
+
+setup_logging()
 
 
 # =========================================================
@@ -48,15 +56,32 @@ model = None
 async def lifespan(app: FastAPI):
     global model
 
-    print("Loading YOLO model...")
+    logger.info(
+        "model_loading | model=%s",
+        MODEL_NAME,
+    )
 
-    model = YOLO(MODEL_NAME)
+    try:
+        model = YOLO(MODEL_NAME)
 
-    print("YOLO model loaded successfully.")
+        logger.info(
+            "model_loaded | model=%s",
+            MODEL_NAME,
+        )
+
+    except Exception:
+        logger.exception(
+            "model_load_failed | model=%s",
+            MODEL_NAME,
+        )
+        raise
 
     yield
 
-    print("Shutting down application...")
+    logger.info(
+        "application_shutdown | model=%s",
+        MODEL_NAME,
+    )
 
 
 # =========================================================
@@ -72,16 +97,70 @@ app = FastAPI(
 
 
 # =========================================================
+# REQUEST LOGGING
+# =========================================================
+
+@app.middleware("http")
+async def logging_middleware(request: Request, call_next):
+    # Generate a unique ID for each request
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    # Start measuring request processing time
+    start_time = time.perf_counter()
+
+    response = None
+
+    try:
+        response = await call_next(request)
+        return response
+
+    except Exception:
+        # Log unexpected errors
+        logger.exception(
+            "request_error | request_id=%s | method=%s | route=%s",
+            request_id,
+            request.method,
+            request.url.path,
+        )
+        raise
+
+    finally:
+        # Calculate request latency
+        latency_ms = round(
+            (time.perf_counter() - start_time) * 1000,
+            2,
+        )
+
+        status_code = (
+            response.status_code
+            if response is not None
+            else 500
+        )
+
+        # Log request metadata
+        logger.info(
+            "request | request_id=%s | method=%s | "
+            "route=%s | status=%s | latency_ms=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            status_code,
+            latency_ms,
+        )
+
+
+# =========================================================
 # CORS
 # =========================================================
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-    "http://localhost:5173",
-    "http://localhost:8080",
-    "https://yolo-web-app-1.onrender.com",
-	],
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "https://yolo-web-app-1.onrender.com",
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -117,71 +196,117 @@ def health():
 @app.post("/api/detect/image")
 async def detect_image(
     request: Request,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
 ):
 
     # -----------------------------------------------------
-    # 1. Check file type
+    # 1. Get request information
+    # -----------------------------------------------------
+
+    request_id = request.state.request_id
+
+    # -----------------------------------------------------
+    # 2. Check file type
     # -----------------------------------------------------
 
     if file.content_type not in ALLOWED_IMAGE_TYPES:
+
+        logger.warning(
+            "invalid_image_type | request_id=%s | "
+            "media_type=%s",
+            request_id,
+            file.content_type,
+        )
+
         raise HTTPException(
             status_code=400,
-            detail="Only JPG, JPEG, and PNG images are supported."
+            detail="Only JPG, JPEG, and PNG images are supported.",
         )
 
     # -----------------------------------------------------
-    # 2. Read file
+    # 3. Read file
     # -----------------------------------------------------
 
     file_bytes = await file.read()
 
+    media_size = len(file_bytes)
+    media_type = file.content_type
+
     # -----------------------------------------------------
-    # 3. Check file size
+    # 4. Check file size
     # -----------------------------------------------------
 
-    if len(file_bytes) > MAX_IMAGE_SIZE:
+    if media_size > MAX_IMAGE_SIZE:
+
+        logger.warning(
+            "image_too_large | request_id=%s | "
+            "media_type=%s | media_size=%s",
+            request_id,
+            media_type,
+            media_size,
+        )
+
         raise HTTPException(
             status_code=413,
-            detail="Image file is too large. Maximum size is 10 MB."
+            detail="Image file is too large. Maximum size is 10 MB.",
         )
 
     # -----------------------------------------------------
-    # 4. Convert bytes → OpenCV image
+    # 5. Convert bytes → OpenCV image
     # -----------------------------------------------------
 
     image_array = np.frombuffer(
         file_bytes,
-        np.uint8
+        np.uint8,
     )
 
     image = cv2.imdecode(
         image_array,
-        cv2.IMREAD_COLOR
+        cv2.IMREAD_COLOR,
     )
 
     if image is None:
+
+        logger.warning(
+            "invalid_image | request_id=%s | "
+            "media_type=%s | media_size=%s",
+            request_id,
+            media_type,
+            media_size,
+        )
+
         raise HTTPException(
             status_code=400,
-            detail="Unable to read the image."
+            detail="Unable to read the image.",
         )
 
     # -----------------------------------------------------
-    # 5. Run YOLO
+    # 6. Run YOLO
     # -----------------------------------------------------
 
     start_time = time.perf_counter()
 
     try:
+
         results = model.predict(
             source=image,
             imgsz=320,
             conf=0.25,
             device="cpu",
-            verbose=False
+            verbose=False,
         )
-    except Exception as e:
-        print(f"YOLO ERROR: {type(e).__name__}: {e}", flush=True)
+
+    except Exception:
+
+        logger.exception(
+            "yolo_image_error | request_id=%s | "
+            "media_type=%s | media_size=%s | model=%s",
+            request_id,
+            media_type,
+            media_size,
+            MODEL_NAME,
+        )
+
         raise
 
     processing_time = time.perf_counter() - start_time
@@ -189,13 +314,13 @@ async def detect_image(
     result = results[0]
 
     # -----------------------------------------------------
-    # 6. Get annotated image
+    # 7. Get annotated image
     # -----------------------------------------------------
 
     annotated_image = result.plot()
 
     # -----------------------------------------------------
-    # 7. Extract detections
+    # 8. Extract detections
     # -----------------------------------------------------
 
     detections = []
@@ -209,7 +334,7 @@ async def detect_image(
 
             x1, y1, x2, y2 = map(
                 float,
-                box.xyxy[0].tolist()
+                box.xyxy[0].tolist(),
             )
 
             class_name = model.names[class_id]
@@ -222,27 +347,41 @@ async def detect_image(
                     "y1": round(y1, 2),
                     "x2": round(x2, 2),
                     "y2": round(y2, 2),
-                }
+                },
             })
 
     # -----------------------------------------------------
-    # 8. Save annotated image
+    # 9. Log detection result
+    # -----------------------------------------------------
+
+    logger.info(
+        "detection | request_id=%s | media_type=%s | "
+        "media_size=%s | model=%s | detection_count=%s",
+        request_id,
+        media_type,
+        media_size,
+        MODEL_NAME,
+        len(detections),
+    )
+
+    # -----------------------------------------------------
+    # 10. Save annotated image
     # -----------------------------------------------------
 
     output_filename = f"{uuid.uuid4()}.jpg"
 
     output_path = os.path.join(
         OUTPUT_DIR,
-        output_filename
+        output_filename,
     )
 
     cv2.imwrite(
         output_path,
-        annotated_image
+        annotated_image,
     )
 
     # -----------------------------------------------------
-    # 9. Create URL
+    # 11. Create URL
     # -----------------------------------------------------
 
     image_url = (
@@ -251,7 +390,7 @@ async def detect_image(
     )
 
     # -----------------------------------------------------
-    # 10. Return result
+    # 12. Return result
     # -----------------------------------------------------
 
     return {
@@ -271,65 +410,101 @@ async def detect_image(
 @app.post("/api/detect/video")
 async def detect_video(
     request: Request,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
 ):
 
     # -----------------------------------------------------
-    # 1. Check file type
+    # 1. Get request information
+    # -----------------------------------------------------
+
+    request_id = request.state.request_id
+
+    # -----------------------------------------------------
+    # 2. Check file type
     # -----------------------------------------------------
 
     if file.content_type not in ALLOWED_VIDEO_TYPES:
+
+        logger.warning(
+            "invalid_video_type | request_id=%s | "
+            "media_type=%s",
+            request_id,
+            file.content_type,
+        )
+
         raise HTTPException(
             status_code=400,
-            detail="Only MP4 videos are supported."
+            detail="Only MP4 videos are supported.",
         )
 
     # -----------------------------------------------------
-    # 2. Read uploaded video
+    # 3. Read uploaded video
     # -----------------------------------------------------
 
     file_bytes = await file.read()
 
+    media_size = len(file_bytes)
+    media_type = file.content_type
+
     # -----------------------------------------------------
-    # 3. Check file size
+    # 4. Check file size
     # -----------------------------------------------------
 
-    if len(file_bytes) > MAX_VIDEO_SIZE:
+    if media_size > MAX_VIDEO_SIZE:
+
+        logger.warning(
+            "video_too_large | request_id=%s | "
+            "media_type=%s | media_size=%s",
+            request_id,
+            media_type,
+            media_size,
+        )
+
         raise HTTPException(
             status_code=413,
-            detail="Video file is too large. Maximum size is 50 MB."
+            detail="Video file is too large. Maximum size is 50 MB.",
         )
 
     # -----------------------------------------------------
-    # 4. Save temporary input video
+    # 5. Save temporary input video
     # -----------------------------------------------------
 
     input_filename = f"input_{uuid.uuid4()}.mp4"
 
     input_path = os.path.join(
         OUTPUT_DIR,
-        input_filename
+        input_filename,
     )
 
     with open(input_path, "wb") as f:
         f.write(file_bytes)
 
     # -----------------------------------------------------
-    # 5. Open video
+    # 6. Open video
     # -----------------------------------------------------
 
     cap = cv2.VideoCapture(input_path)
 
     if not cap.isOpened():
-        os.remove(input_path)
+
+        if os.path.exists(input_path):
+            os.remove(input_path)
+
+        logger.warning(
+            "invalid_video | request_id=%s | "
+            "media_type=%s | media_size=%s",
+            request_id,
+            media_type,
+            media_size,
+        )
 
         raise HTTPException(
             status_code=400,
-            detail="Unable to read the video."
+            detail="Unable to read the video.",
         )
 
     # -----------------------------------------------------
-    # 6. Get video information
+    # 7. Get video information
     # -----------------------------------------------------
 
     width = int(
@@ -348,14 +523,14 @@ async def detect_video(
         fps = 30
 
     # -----------------------------------------------------
-    # 7. Create output video
+    # 8. Create output video
     # -----------------------------------------------------
 
     output_filename = f"{uuid.uuid4()}.mp4"
 
     output_path = os.path.join(
         OUTPUT_DIR,
-        output_filename
+        output_filename,
     )
 
     fourcc = cv2.VideoWriter_fourcc(
@@ -366,11 +541,11 @@ async def detect_video(
         output_path,
         fourcc,
         fps,
-        (width, height)
+        (width, height),
     )
 
     # -----------------------------------------------------
-    # 8. Process video
+    # 9. Process video
     # -----------------------------------------------------
 
     start_time = time.perf_counter()
@@ -384,10 +559,31 @@ async def detect_video(
         if not success:
             break
 
-        results = model(
-            frame,
-            verbose=False
-        )
+        try:
+
+            results = model(
+                frame,
+                verbose=False,
+            )
+
+        except Exception:
+
+            logger.exception(
+                "yolo_video_error | request_id=%s | "
+                "media_type=%s | media_size=%s | model=%s",
+                request_id,
+                media_type,
+                media_size,
+                MODEL_NAME,
+            )
+
+            cap.release()
+            writer.release()
+
+            if os.path.exists(input_path):
+                os.remove(input_path)
+
+            raise
 
         result = results[0]
 
@@ -398,7 +594,6 @@ async def detect_video(
         )
 
         # Count detected classes
-
         if result.boxes is not None:
 
             for box in result.boxes:
@@ -416,18 +611,40 @@ async def detect_video(
     )
 
     # -----------------------------------------------------
-    # 9. Release resources
+    # 10. Release resources
     # -----------------------------------------------------
 
     cap.release()
     writer.release()
 
     # Remove temporary input video
-
-    os.remove(input_path)
+    if os.path.exists(input_path):
+        os.remove(input_path)
 
     # -----------------------------------------------------
-    # 10. Create output URL
+    # 11. Calculate total detections
+    # -----------------------------------------------------
+
+    total_detections = sum(
+        counts.values()
+    )
+
+    # -----------------------------------------------------
+    # 12. Log video detection result
+    # -----------------------------------------------------
+
+    logger.info(
+        "detection | request_id=%s | media_type=%s | "
+        "media_size=%s | model=%s | detection_count=%s",
+        request_id,
+        media_type,
+        media_size,
+        MODEL_NAME,
+        total_detections,
+    )
+
+    # -----------------------------------------------------
+    # 13. Create output URL
     # -----------------------------------------------------
 
     video_url = (
@@ -436,7 +653,7 @@ async def detect_video(
     )
 
     # -----------------------------------------------------
-    # 11. Return result
+    # 14. Return result
     # -----------------------------------------------------
 
     return {
@@ -445,7 +662,7 @@ async def detect_video(
         "counts": counts,
         "processing_time": round(
             processing_time,
-            4
+            4,
         ),
         "video_url": video_url,
     }
