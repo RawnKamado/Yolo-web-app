@@ -408,7 +408,7 @@ async def detect_image(
 # =========================================================
 
 @app.post("/api/detect/video")
-async def detect_video(
+def detect_video(
     request: Request,
     file: UploadFile = File(...),
 ):
@@ -456,7 +456,7 @@ async def detect_video(
 
         while True:
 
-            chunk = await file.read(1024 * 1024)  # 1 MB
+            chunk = file.file.read(1024 * 1024)  # 1 MB
 
             if not chunk:
                 break
