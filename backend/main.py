@@ -438,36 +438,10 @@ async def detect_video(
         )
 
     # -----------------------------------------------------
-    # 3. Read uploaded video
+    # 3. Save uploaded video in chunks
     # -----------------------------------------------------
 
-    file_bytes = await file.read()
-
-    media_size = len(file_bytes)
     media_type = file.content_type
-
-    # -----------------------------------------------------
-    # 4. Check file size
-    # -----------------------------------------------------
-
-    if media_size > MAX_VIDEO_SIZE:
-
-        logger.warning(
-            "video_too_large | request_id=%s | "
-            "media_type=%s | media_size=%s",
-            request_id,
-            media_type,
-            media_size,
-        )
-
-        raise HTTPException(
-            status_code=413,
-            detail="Video file is too large. Maximum size is 50 MB.",
-        )
-
-    # -----------------------------------------------------
-    # 5. Save temporary input video
-    # -----------------------------------------------------
 
     input_filename = f"input_{uuid.uuid4()}.mp4"
 
@@ -476,11 +450,43 @@ async def detect_video(
         input_filename,
     )
 
+    media_size = 0
+
     with open(input_path, "wb") as f:
-        f.write(file_bytes)
+
+        while True:
+
+            chunk = await file.read(1024 * 1024)  # 1 MB
+
+            if not chunk:
+                break
+
+            media_size += len(chunk)
+
+            if media_size > MAX_VIDEO_SIZE:
+
+                f.close()
+
+                if os.path.exists(input_path):
+                    os.remove(input_path)
+
+                logger.warning(
+                    "video_too_large | request_id=%s | "
+                    "media_type=%s | media_size=%s",
+                    request_id,
+                    media_type,
+                    media_size,
+                )
+
+                raise HTTPException(
+                    status_code=413,
+                    detail="Video file is too large. Maximum size is 50 MB.",
+                )
+
+            f.write(chunk)
 
     # -----------------------------------------------------
-    # 6. Open video
+    # 4. Open video
     # -----------------------------------------------------
 
     cap = cv2.VideoCapture(input_path)
@@ -504,7 +510,7 @@ async def detect_video(
         )
 
     # -----------------------------------------------------
-    # 7. Get video information
+    # 5. Get video information
     # -----------------------------------------------------
 
     width = int(
@@ -523,7 +529,7 @@ async def detect_video(
         fps = 30
 
     # -----------------------------------------------------
-    # 8. Create output video
+    # 6. Create output video
     # -----------------------------------------------------
 
     output_filename = f"{uuid.uuid4()}.mp4"
@@ -544,85 +550,126 @@ async def detect_video(
         (width, height),
     )
 
+    if not writer.isOpened():
+
+        cap.release()
+
+        if os.path.exists(input_path):
+            os.remove(input_path)
+
+        logger.error(
+            "video_writer_error | request_id=%s | "
+            "media_type=%s | media_size=%s",
+            request_id,
+            media_type,
+            media_size,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to create output video.",
+        )
+
     # -----------------------------------------------------
-    # 9. Process video
+    # 7. Process video
     # -----------------------------------------------------
 
     start_time = time.perf_counter()
 
     counts = {}
 
-    while True:
+    try:
 
-        success, frame = cap.read()
+        while True:
 
-        if not success:
-            break
+            success, frame = cap.read()
 
-        try:
+            if not success:
+                break
 
-            results = model(
-                frame,
-                verbose=False,
-            )
+            try:
 
-        except Exception:
-
-            logger.exception(
-                "yolo_video_error | request_id=%s | "
-                "media_type=%s | media_size=%s | model=%s",
-                request_id,
-                media_type,
-                media_size,
-                MODEL_NAME,
-            )
-
-            cap.release()
-            writer.release()
-
-            if os.path.exists(input_path):
-                os.remove(input_path)
-
-            raise
-
-        result = results[0]
-
-        annotated_frame = result.plot()
-
-        writer.write(
-            annotated_frame
-        )
-
-        # Count detected classes
-        if result.boxes is not None:
-
-            for box in result.boxes:
-
-                class_id = int(box.cls[0])
-
-                class_name = model.names[class_id]
-
-                counts[class_name] = (
-                    counts.get(class_name, 0) + 1
+                results = model.predict(
+                    source=frame,
+                    imgsz=320,
+                    conf=0.25,
+                    device="cpu",
+                    verbose=False,
                 )
+
+            except Exception:
+
+                logger.exception(
+                    "yolo_video_error | request_id=%s | "
+                    "media_type=%s | media_size=%s | model=%s",
+                    request_id,
+                    media_type,
+                    media_size,
+                    MODEL_NAME,
+                )
+
+                raise
+
+            result = results[0]
+
+            annotated_frame = result.plot()
+
+            writer.write(
+                annotated_frame
+            )
+
+            # Count detected classes
+            if result.boxes is not None:
+
+                for box in result.boxes:
+
+                    class_id = int(
+                        box.cls[0]
+                    )
+
+                    class_name = model.names[
+                        class_id
+                    ]
+
+                    counts[class_name] = (
+                        counts.get(class_name, 0) + 1
+                    )
+
+    except Exception:
+
+        cap.release()
+        writer.release()
+
+        if os.path.exists(input_path):
+            os.remove(input_path)
+
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+        raise
+
+    finally:
+
+        cap.release()
+        writer.release()
+
+    # -----------------------------------------------------
+    # 8. Calculate processing time
+    # -----------------------------------------------------
 
     processing_time = (
         time.perf_counter() - start_time
     )
 
     # -----------------------------------------------------
-    # 10. Release resources
+    # 9. Remove temporary input video
     # -----------------------------------------------------
 
-    cap.release()
-    writer.release()
-
-    # Remove temporary input video
     if os.path.exists(input_path):
         os.remove(input_path)
 
     # -----------------------------------------------------
-    # 11. Calculate total detections
+    # 10. Calculate total detections
     # -----------------------------------------------------
 
     total_detections = sum(
@@ -630,7 +677,7 @@ async def detect_video(
     )
 
     # -----------------------------------------------------
-    # 12. Log video detection result
+    # 11. Log video detection result
     # -----------------------------------------------------
 
     logger.info(
@@ -644,7 +691,7 @@ async def detect_video(
     )
 
     # -----------------------------------------------------
-    # 13. Create output URL
+    # 12. Create URL
     # -----------------------------------------------------
 
     video_url = (
@@ -653,7 +700,7 @@ async def detect_video(
     )
 
     # -----------------------------------------------------
-    # 14. Return result
+    # 13. Return result
     # -----------------------------------------------------
 
     return {
