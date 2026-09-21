@@ -1,20 +1,67 @@
-# React + Vite
+# YOLO Web Application - Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The frontend provides the web interface for uploading images and videos and displaying YOLO detection results.
 
-Currently, two official plugins are available:
+## Technologies
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React
+- Vite
+- JavaScript
+- CSS
 
-## React Compiler
+## Features
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Image upload
+- Video upload
+- Object detection results
+- Loading state
+- Error handling
+- Backend API integration
 
-## Expanding the Oxlint configuration
+## Configuration
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+Create a `.env` file in the frontend directory:
 
-## Requirements
+```env
+VITE_API_URL=http://localhost:8000
+```
 
-Install npm to run!!!
+This variable specifies the URL of the FastAPI backend.
+
+## Run Locally
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Start the development server:
+
+```bash
+npm run dev
+```
+
+The frontend will normally be available at:
+
+```text
+http://localhost:5173
+```
+
+## Production Build
+
+Build the application:
+
+```bash
+npm run build
+```
+
+The production files are generated in:
+
+```text
+dist/
+```
+
+## Deployment
+
+The frontend is deployed as a Render Static Site and communicates with the deployed FastAPI backend through the configured `VITE_API_URL`.
