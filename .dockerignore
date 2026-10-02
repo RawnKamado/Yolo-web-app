@@ -24,7 +24,7 @@ __pycache__/
 *.bin
 
 # Temporary output
-outputs/
+backend/outputs/
 uploads/
 
 # Node
